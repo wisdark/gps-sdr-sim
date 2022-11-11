@@ -1383,6 +1383,49 @@ int readUserMotion(double xyz[USER_MOTION_SIZE][3], const char *filename)
 	return (numd);
 }
 
+/*! \brief Read the list of user motions from the input file
+ *  \param[out] xyz Output array of LatLonHei coordinates for user motion
+ *  \param[[in] filename File name of the text input file with format Lat,Lon,Hei
+ *  \returns Number of user data motion records read, -1 on error
+ *
+ * Added by romalvarezllorens@gmail.com
+ */
+int readUserMotionLLH(double xyz[USER_MOTION_SIZE][3], const char *filename)
+{
+	FILE *fp;
+	int numd;
+	double t,llh[3];
+	char str[MAX_CHAR];
+
+	if (NULL==(fp=fopen(filename,"rt")))
+		return(-1);
+
+	for (numd=0; numd<USER_MOTION_SIZE; numd++)
+	{
+		if (fgets(str, MAX_CHAR, fp)==NULL)
+			break;
+
+		if (EOF==sscanf(str, "%lf,%lf,%lf,%lf", &t, &llh[0], &llh[1], &llh[2])) // Read CSV line
+			break;
+		
+		if (llh[0] > 90.0 || llh[0] < -90.0 || llh[1]>180.0 || llh[1] < -180.0)
+		{
+			fprintf(stderr, "ERROR: Invalid file format (time[s], latitude[deg], longitude[deg], height [m].\n");
+			numd = 0; // Empty user motion
+			break;
+		}
+
+		llh[0] /= R2D; // convert to RAD
+		llh[1] /= R2D; // convert to RAD
+
+		llh2xyz(llh, xyz[numd]);
+	}
+
+	fclose(fp);
+
+	return (numd);
+}
+
 int readNmeaGGA(double xyz[USER_MOTION_SIZE][3], const char *filename)
 {
 	FILE *fp;
@@ -1652,10 +1695,11 @@ void usage(void)
 	fprintf(stderr, "Usage: gps-sdr-sim [options]\n"
 		"Options:\n"
 		"  -e <gps_nav>     RINEX navigation file for GPS ephemerides (required)\n"
-		"  -u <user_motion> User motion file (dynamic mode)\n"
+		"  -u <user_motion> User motion file in ECEF x, y, z format (dynamic mode)\n"
+		"  -x <user_motion> User motion file in lat, lon, height format (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -c <location>    ECEF X,Y,Z in meters (static mode) e.g. 3967283.154,1022538.181,4872414.484\n"
-		"  -l <location>    Lat,Lon,Hgt (static mode) e.g. 35.681298,139.766247,10.0\n"
+		"  -l <location>    Lat, lon, height (static mode) e.g. 35.681298,139.766247,10.0\n"
 		"  -t <date,time>   Scenario start time YYYY/MM/DD,hh:mm:ss\n"
 		"  -T <date,time>   Overwrite TOC and TOE to scenario start time\n"
 		"  -d <duration>    Duration [sec] (dynamic mode max: %.0f, static mode max: %d)\n"
@@ -1702,6 +1746,7 @@ int main(int argc, char *argv[])
 
 	int staticLocationMode = FALSE;
 	int nmeaGGA = FALSE;
+	int umLLH = FALSE;
 
 	char navfile[MAX_CHAR];
 	char outfile[MAX_CHAR];
@@ -1753,7 +1798,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	while ((result=getopt(argc,argv,"e:u:g:c:l:o:s:b:T:t:d:iv"))!=-1)
+	while ((result=getopt(argc,argv,"e:u:x:g:c:l:o:s:b:T:t:d:iv"))!=-1)
 	{
 		switch (result)
 		{
@@ -1763,6 +1808,12 @@ int main(int argc, char *argv[])
 		case 'u':
 			strcpy(umfile, optarg);
 			nmeaGGA = FALSE;
+			umLLH = FALSE;
+			break;
+		case 'x':
+			// Added by romalvarezllorens@gmail.com
+			strcpy(umfile, optarg);
+			umLLH = TRUE;
 			break;
 		case 'g':
 			strcpy(umfile, optarg);
@@ -1889,6 +1940,8 @@ int main(int argc, char *argv[])
 		// Read user motion file
 		if (nmeaGGA==TRUE)
 			numd = readNmeaGGA(xyz, umfile);
+		else if (umLLH == TRUE)
+			numd = readUserMotionLLH(xyz, umfile);
 		else
 			numd = readUserMotion(xyz, umfile);
 
@@ -1906,6 +1959,9 @@ int main(int argc, char *argv[])
 		// Set simulation duration
 		if (numd>iduration)
 			numd = iduration;
+
+		// Set user initial position
+		xyz2llh(xyz[0], llh);
 	} 
 	else 
 	{ 
@@ -1913,12 +1969,16 @@ int main(int argc, char *argv[])
 		// Added by scateu@gmail.com 
 		fprintf(stderr, "Using static location mode.\n");
 
+		// Set simulation duration
 		numd = iduration;
+
+		// Set user initial position
+		llh2xyz(llh, xyz[0]);
 	}
-/*
+
 	fprintf(stderr, "xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
 	fprintf(stderr, "llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
-*/
+
 	////////////////////////////////////////////////////////////
 	// Read ephemeris
 	////////////////////////////////////////////////////////////
